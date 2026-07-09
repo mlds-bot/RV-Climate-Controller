@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>MMCC RV A/C Controller</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    :root{
+      --bg1:#07111f; --bg2:#0f172a; --card:#121c2e; --card2:#0b1220;
+      --text:#f8fafc; --muted:#94a3b8; --line:rgba(255,255,255,.11);
+      --green:#22c55e; --red:#ef4444; --blue:#38bdf8; --yellow:#f59e0b;
+      --shadow:0 18px 45px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+      background:radial-gradient(circle at top,#1e3a5f 0%,var(--bg2) 43%,var(--bg1) 100%);
+      min-height:100vh;
+    }
+    .app{max-width:520px;margin:0 auto;padding:18px 16px 32px}
+    .top{text-align:center;padding:8px 0 16px}
+    .brand{font-size:13px;color:var(--muted);letter-spacing:.16em;text-transform:uppercase}
+    h1{font-size:29px;margin:5px 0 0}
+    .card{
+      background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.025));
+      border:1px solid var(--line); border-radius:26px; padding:18px; margin:14px 0; box-shadow:var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+    .hero{text-align:center;padding:24px 18px}
+    .temp{font-size:86px;font-weight:800;line-height:.95;letter-spacing:-4px}
+    .temp small{font-size:34px;letter-spacing:0;color:var(--muted)}
+    .subrow{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:14px}
+    .pill{
+      display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:999px;
+      padding:8px 12px;background:rgba(255,255,255,.06);font-weight:700;font-size:14px;
+    }
+    .dot{width:10px;height:10px;border-radius:50%;background:var(--red);box-shadow:0 0 12px var(--red)}
+    .dot.good{background:var(--green);box-shadow:0 0 12px var(--green)}
+    .dot.warn{background:var(--yellow);box-shadow:0 0 12px var(--yellow)}
+    .mode{font-size:20px;font-weight:800;margin-top:16px;color:var(--blue)}
+    .buttons{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    button{
+      border:0;border-radius:18px;padding:18px 12px;color:white;font-weight:800;font-size:17px;
+      cursor:pointer;box-shadow:0 10px 25px rgba(0,0,0,.25)
+    }
+    .enable{background:linear-gradient(180deg,#22c55e,#15803d)}
+    .disable{background:linear-gradient(180deg,#ef4444,#991b1b)}
+    .status{grid-column:1/3;background:linear-gradient(180deg,#3b82f6,#1d4ed8)}
+    .row{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding:12px 0;gap:10px}
+    .row:last-child{border-bottom:none}
+    .label{color:var(--muted);font-size:14px}
+    .value{font-weight:800;text-align:right}
+    canvas{width:100%;height:210px;border-radius:18px;background:rgba(0,0,0,.18);margin-top:12px}
+    .log{max-height:210px;overflow:auto;font-size:13px;color:#cbd5e1}
+    .log div{padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+    details summary{cursor:pointer;color:var(--muted);font-weight:800}
+    input{
+      width:100%;margin:7px 0 13px;padding:13px;border-radius:14px;border:1px solid var(--line);
+      background:#07111f;color:var(--text);font-size:15px;
+    }
+    .note{font-size:12px;color:var(--muted);line-height:1.4;text-align:center;margin-top:10px}
+    .footer{text-align:center;color:var(--muted);font-size:12px;margin-top:18px}
+  </style>
+</head>
+<body>
+  <main class="app">
+    <div class="top">
+      <div class="brand">Minch Mod Climate Controller</div>
+      <h1>RV A/C Controller</h1>
+    </div>
+
+    <section class="card hero">
+      <div class="temp"><span id="tempF">--</span><small>°F</small></div>
+      <div class="subrow">
+        <span class="pill">Humidity <span id="humidity">--</span>%</span>
+        <span class="pill"><span id="onlineDot" class="dot"></span><span id="onlineText">Offline</span></span>
+      </div>
+      <div class="mode" id="modeText">Waiting for status</div>
+    </section>
+
+    <section class="card">
+      <div class="buttons">
+        <button class="enable" onclick="sendCommand('ENABLE')">Enable Cooling</button>
+        <button class="disable" onclick="sendCommand('DISABLE')">Disable Cooling</button>
+        <button class="status" onclick="sendCommand('STATUS')">Request Status</button>
+      </div>
+      <div class="note">Enable Cooling connects the thermostat communication wire. Disable Cooling disconnects it.</div>
+    </section>
+
+    <section class="card">
+      <div class="row"><div class="label">MQTT</div><div class="value" id="mqttText">Disconnected</div></div>
+      <div class="row"><div class="label">Relay / Comm Wire</div><div class="value" id="relayState">Unknown</div></div>
+      <div class="row"><div class="label">Wi-Fi Signal</div><div class="value" id="wifiRssi">-- dBm</div></div>
+      <div class="row"><div class="label">ESP Uptime</div><div class="value" id="uptime">--</div></div>
+      <div class="row"><div class="label">IP Address</div><div class="value" id="ipAddr">--</div></div>
+      <div class="row"><div class="label">Last Update</div><div class="value" id="lastUpdate">Never</div></div>
+    </section>
+
+    <section class="card">
+      <div class="label">Temperature History</div>
+      <canvas id="chart" width="520" height="210"></canvas>
+      <div class="note">Graph stores readings while this page is open.</div>
+    </section>
+
+    <section class="card">
+      <div class="label">Event Log</div>
+      <div class="log" id="log"></div>
+    </section>
+
+    <details class="card">
+      <summary>MQTT Settings</summary>
+      <p class="note">Use the same HiveMQ credentials as Dad Chat. This page only uses the separate <b>rv/ac</b> topic tree.</p>
+      <label class="label">HiveMQ WebSocket URL</label>
+      <input id="mqttUrl" placeholder="wss://your-host.s1.eu.hivemq.cloud:8884/mqtt">
+      <label class="label">Username</label>
+      <input id="mqttUser" placeholder="MQTT username">
+      <label class="label">Password</label>
+      <input id="mqttPass" type="password" placeholder="MQTT password">
+      <label class="label">Base Topic</label>
+      <input id="baseTopic" value="rv/ac">
+      <button class="status" onclick="saveAndReconnect()">Save & Connect</button>
+      <button style="width:100%;margin-top:10px;background:#334155" onclick="clearSettings()">Clear Saved Settings</button>
+    </details>
+
+    <div class="footer">MMCC RV A/C Controller</div>
+  </main>
+
+<script>
+let client=null, baseTopic="rv/ac", tempHistory=[], lastOnline=0;
+const maxHistory=240;
+function $(id){return document.getElementById(id)}
+function time(){return new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"})}
+function log(m){const e=document.createElement("div"); e.textContent=`${time()}  ${m}`; $("log").prepend(e)}
+function save(){
+  localStorage.setItem("mmcc_url",$("mqttUrl").value.trim());
+  localStorage.setItem("mmcc_user",$("mqttUser").value.trim());
+  localStorage.setItem("mmcc_pass",$("mqttPass").value);
+  localStorage.setItem("mmcc_base",$("baseTopic").value.trim()||"rv/ac");
+}
+function load(){
+  $("mqttUrl").value=localStorage.getItem("mmcc_url")||"";
+  $("mqttUser").value=localStorage.getItem("mmcc_user")||"";
+  $("mqttPass").value=localStorage.getItem("mmcc_pass")||"";
+  $("baseTopic").value=localStorage.getItem("mmcc_base")||"rv/ac";
+  baseTopic=$("baseTopic").value.trim()||"rv/ac";
+}
+function clearSettings(){localStorage.removeItem("mmcc_url");localStorage.removeItem("mmcc_user");localStorage.removeItem("mmcc_pass");localStorage.removeItem("mmcc_base");location.reload()}
+function setOnline(v){
+  $("onlineDot").className=v?"dot good":"dot";
+  $("onlineText").textContent=v?"Online":"Offline";
+}
+function uptime(s){
+  s=Number(s); if(!isFinite(s)) return "--";
+  const d=Math.floor(s/86400), h=Math.floor((s%86400)/3600), m=Math.floor((s%3600)/60);
+  return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`;
+}
+function saveAndReconnect(){save(); connect()}
+function connect(){
+  if(client){try{client.end(true)}catch(e){}}
+  baseTopic=$("baseTopic").value.trim()||"rv/ac";
+  const url=$("mqttUrl").value.trim();
+  if(!url){$("mqttText").textContent="Enter settings"; log("Enter HiveMQ WebSocket URL first"); return}
+  $("mqttText").textContent="Connecting";
+  log("Connecting to MQTT");
+  client=mqtt.connect(url,{
+    username:$("mqttUser").value.trim(),
+    password:$("mqttPass").value,
+    clean:true,
+    reconnectPeriod:3000,
+    connectTimeout:10000,
+    clientId:"mmcc_dashboard_"+Math.random().toString(16).slice(2)
+  });
+  client.on("connect",()=>{ $("mqttText").textContent="Connected"; log("MQTT connected"); client.subscribe(`${baseTopic}/#`); sendCommand("STATUS"); });
+  client.on("reconnect",()=>{$("mqttText").textContent="Reconnecting"});
+  client.on("close",()=>{$("mqttText").textContent="Disconnected"});
+  client.on("error",e=>log("MQTT error: "+e.message));
+  client.on("message",onMessage);
+}
+function sendCommand(c){
+  if(!client||!client.connected){log("Cannot send command: MQTT not connected"); return}
+  client.publish(`${baseTopic}/command`,c,{qos:1,retain:false});
+  log("Command sent: "+c);
+}
+function onMessage(topic,payload){
+  const msg=payload.toString(), sub=topic.replace(baseTopic+"/","");
+  $("lastUpdate").textContent=time();
+  switch(sub){
+    case "online": lastOnline=Date.now(); setOnline(msg.toLowerCase()==="online"); log("ESP "+msg); break;
+    case "relay_state":
+      $("relayState").textContent=msg;
+      $("modeText").textContent=msg==="CONNECTED"?"Cooling Enabled":"Cooling Disabled";
+      log("Relay: "+msg); break;
+    case "status": $("modeText").textContent=msg.replaceAll("_"," "); break;
+    case "temperature_f":
+      const t=Number(msg); if(isFinite(t)){ $("tempF").textContent=t.toFixed(1); tempHistory.push({t,time:new Date()}); if(tempHistory.length>maxHistory)tempHistory.shift(); drawChart(); } break;
+    case "humidity": const h=Number(msg); if(isFinite(h)) $("humidity").textContent=h.toFixed(1); break;
+    case "wifi_rssi": $("wifiRssi").textContent=msg+" dBm"; break;
+    case "uptime_seconds": $("uptime").textContent=uptime(msg); break;
+    case "ip": $("ipAddr").textContent=msg; break;
+    case "sensor_status": if(msg!=="OK") log("Sensor: "+msg); break;
+  }
+}
+function drawChart(){
+  const c=$("chart"), x=c.getContext("2d"), w=c.width, h=c.height;
+  x.clearRect(0,0,w,h);
+  x.strokeStyle="rgba(255,255,255,.13)"; x.lineWidth=1;
+  for(let i=1;i<4;i++){let y=h*i/4; x.beginPath(); x.moveTo(0,y); x.lineTo(w,y); x.stroke()}
+  if(tempHistory.length<2){x.fillStyle="#94a3b8";x.font="16px Arial";x.textAlign="center";x.fillText("Waiting for temperature readings...",w/2,h/2);return}
+  const vals=tempHistory.map(p=>p.t); let min=Math.min(...vals), max=Math.max(...vals); if(max-min<4){max+=2;min-=2}
+  const pad=24; x.strokeStyle="#38bdf8"; x.lineWidth=4; x.beginPath();
+  tempHistory.forEach((p,i)=>{let px=pad+i/(tempHistory.length-1)*(w-pad*2); let py=h-pad-(p.t-min)/(max-min)*(h-pad*2); if(i===0)x.moveTo(px,py);else x.lineTo(px,py)});
+  x.stroke(); x.fillStyle="#94a3b8"; x.font="13px Arial"; x.textAlign="left"; x.fillText(max.toFixed(0)+"°",6,16); x.fillText(min.toFixed(0)+"°",6,h-8);
+}
+setInterval(()=>{if(lastOnline && Date.now()-lastOnline>90000)setOnline(false)},5000);
+load(); drawChart(); if($("mqttUrl").value) connect(); else log("Open MQTT Settings to connect");
+</script>
+</body>
+</html>
