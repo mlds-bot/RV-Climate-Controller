@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>MMCC RV Climate Controller</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+:root{--bg:#050b16;--card:#111827;--text:#f8fafc;--muted:#94a3b8;--line:rgba(255,255,255,.12);--green:#22c55e;--red:#ef4444;--blue:#38bdf8;--yellow:#f59e0b}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#1e3a5f 0%,#0f172a 42%,#050b16 100%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+.app{max-width:520px;margin:0 auto;padding:20px 16px 36px}
+.header{text-align:center;padding:8px 0 18px}.brand{font-size:13px;letter-spacing:.18em;color:var(--muted);font-weight:800}h1{margin:7px 0 4px;font-size:30px;letter-spacing:-.03em}.subtitle{color:var(--muted);font-size:14px}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.025));border:1px solid var(--line);border-radius:26px;padding:18px;margin:14px 0;box-shadow:0 18px 44px rgba(0,0,0,.35);backdrop-filter:blur(10px)}
+.hero{text-align:center;padding:26px 18px}.temp{font-size:88px;font-weight:900;line-height:.9;letter-spacing:-5px}.temp .unit{font-size:34px;color:var(--muted);letter-spacing:0;margin-left:2px}
+.mode{margin-top:18px;font-size:21px;font-weight:900;color:var(--blue);text-transform:uppercase;letter-spacing:.04em}
+.pills{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:16px}.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.06);font-size:14px;font-weight:800}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--red);box-shadow:0 0 12px var(--red)}.dot.good{background:var(--green);box-shadow:0 0 12px var(--green)}.dot.warn{background:var(--yellow);box-shadow:0 0 12px var(--yellow)}
+.buttons{display:grid;grid-template-columns:1fr 1fr;gap:12px}button{border:0;border-radius:18px;padding:18px 10px;color:white;font-size:17px;font-weight:900;cursor:pointer;box-shadow:0 10px 24px rgba(0,0,0,.3)}button:active{transform:scale(.98)}.enable{background:linear-gradient(180deg,#22c55e,#15803d)}.disable{background:linear-gradient(180deg,#ef4444,#991b1b)}.status{grid-column:1/3;background:linear-gradient(180deg,#3b82f6,#1d4ed8)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.label{color:var(--muted);font-size:14px}.value{font-weight:900;text-align:right}
+canvas{display:block;width:100%;height:220px;margin-top:12px;border-radius:18px;background:rgba(0,0,0,.22)}
+.log{max-height:220px;overflow:auto;font-size:13px;color:#cbd5e1;line-height:1.4}.log div{padding:7px 0;border-bottom:1px solid rgba(255,255,255,.07)}
+.note{color:var(--muted);font-size:12px;line-height:1.45;text-align:center;margin-top:12px}.footer{text-align:center;color:var(--muted);font-size:12px;margin-top:18px}
+#lockScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.lockCard{width:100%;max-width:420px;text-align:center}.lockIcon{font-size:46px;margin-bottom:8px}
+input{width:100%;padding:16px;margin-top:14px;border-radius:16px;border:1px solid var(--line);background:#07111f;color:var(--text);font-size:18px;text-align:center}
+.unlock{width:100%;margin-top:14px;background:linear-gradient(180deg,#3b82f6,#1d4ed8)}
+.error{color:var(--red);font-weight:800;margin-top:12px;min-height:22px}
+.hidden{display:none!important}
+.logout{background:#334155;width:100%;margin-top:10px}
+</style>
+</head>
+<body>
+
+<section id="lockScreen">
+  <div class="card lockCard">
+    <div class="lockIcon">🔒</div>
+    <div class="brand">MINCH MOD</div>
+    <h1>RV Climate Controller</h1>
+    <div class="subtitle">Access Required</div>
+    <input id="accessPassword" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')unlock()" />
+    <button class="unlock" onclick="unlock()">Unlock</button>
+    <div id="lockError" class="error"></div>
+    <div class="note">The dashboard will not connect to MQTT until unlocked.</div>
+  </div>
+</section>
+
+<main id="dashboard" class="app hidden">
+<section class="header"><div class="brand">MINCH MOD</div><h1>RV Climate Controller</h1><div class="subtitle">Keystone Springdale</div></section>
+<section class="card hero">
+<div class="temp"><span id="tempF">--</span><span class="unit">°F</span></div>
+<div class="pills"><span class="pill"><span id="onlineDot" class="dot"></span><span id="onlineText">ESP Offline</span></span><span class="pill">Humidity <span id="humidity">--</span>%</span><span class="pill"><span id="mqttDot" class="dot"></span><span id="mqttText">MQTT Offline</span></span></div>
+<div id="modeText" class="mode">Waiting for status</div>
+</section>
+<section class="card"><div class="buttons"><button class="enable" onclick="confirmEnable()">Enable Cooling</button><button class="disable" onclick="sendCommand('DISABLE')">Disable Cooling</button><button class="status" onclick="sendCommand('STATUS')">Refresh Status</button></div><div class="note">Remote cooling connects the thermostat communication wire. The factory thermostat still controls the A/C.</div></section>
+<section class="card">
+<div class="row"><div class="label">Relay / Comm Wire</div><div class="value" id="relayState">Unknown</div></div>
+<div class="row"><div class="label">Wi-Fi Signal</div><div class="value" id="wifiRssi">-- dBm</div></div>
+<div class="row"><div class="label">ESP Uptime</div><div class="value" id="uptime">--</div></div>
+<div class="row"><div class="label">ESP IP Address</div><div class="value" id="ipAddr">--</div></div>
+<div class="row"><div class="label">Last Update</div><div class="value" id="lastUpdate">Never</div></div>
+</section>
+<section class="card"><div class="label">Temperature History</div><canvas id="chart" width="520" height="220"></canvas><div class="note">History is stored while this page is open.</div></section>
+<section class="card"><div class="label">Event Log</div><div class="log" id="log"></div></section>
+<section class="card"><button class="logout" onclick="lockAgain()">Lock Dashboard</button><div class="note">Locks this browser. MQTT disconnects when locked.</div></section>
+<div class="footer">MMCC RV A/C Controller</div>
+</main>
+
+<script>
+/* ================= CHANGE THESE ================= */
+
+const MQTT_URL  = "wss://b1dcdceb082d4443873bb186cd006f90.s1.eu.hivemq.cloud:8884/mqtt";
+const MQTT_USER = "MLDS_CHAT2";
+const MQTT_PASS = "PASTE_YOUR_REAL_MQTT_PASSWORD_HERE";
+const BASE_TOPIC = "rv/ac";
+
+// Change this before uploading. This is the page unlock password.
+const PAGE_PASSWORD = "CHANGE_ME";
+
+/* ================================================ */
+
+let client=null,tempHistory=[],lastOnlineMessage=0;const maxHistory=240;
+function $(id){return document.getElementById(id)}
+function nowTime(){return new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"})}
+function log(msg){const d=document.createElement("div");d.textContent=`${nowTime()}  ${msg}`;$("log").prepend(d)}
+function setMqttConnected(v){$("mqttDot").className=v?"dot good":"dot";$("mqttText").textContent=v?"MQTT Online":"MQTT Offline"}
+function setEspOnline(v){$("onlineDot").className=v?"dot good":"dot";$("onlineText").textContent=v?"ESP Online":"ESP Offline"}
+
+function unlock(){
+  const entered=$("accessPassword").value;
+  if(entered!==PAGE_PASSWORD){$("lockError").textContent="Incorrect password";return}
+  sessionStorage.setItem("mmcc_unlocked","yes");
+  showDashboard();
+}
+
+function lockAgain(){
+  sessionStorage.removeItem("mmcc_unlocked");
+  if(client){try{client.end(true)}catch(e){}}
+  location.reload();
+}
+
+function showDashboard(){
+  $("lockScreen").classList.add("hidden");
+  $("dashboard").classList.remove("hidden");
+  drawChart();
+  connectMqtt();
+}
+
+function confirmEnable(){
+  if(confirm("Enable remote cooling?\n\nThis will connect the thermostat communication wire and allow the factory thermostat to run the A/C.")){
+    sendCommand("ENABLE");
+  } else {
+    log("Enable cooling cancelled");
+  }
+}
+
+function formatUptime(s){s=Number(s);if(!isFinite(s))return"--";const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`}
+function connectMqtt(){
+log("Connecting to HiveMQ...");
+client=mqtt.connect(MQTT_URL,{username:MQTT_USER,password:MQTT_PASS,clean:true,reconnectPeriod:3000,connectTimeout:10000,clientId:"mmcc_rv_dashboard_"+Math.random().toString(16).slice(2)});
+client.on("connect",()=>{setMqttConnected(true);log("MQTT connected");client.subscribe(`${BASE_TOPIC}/#`,{qos:1});sendCommand("STATUS")});
+client.on("reconnect",()=>{setMqttConnected(false);log("MQTT reconnecting...")});
+client.on("close",()=>setMqttConnected(false));
+client.on("error",e=>{setMqttConnected(false);log("MQTT error: "+e.message)});
+client.on("message",handleMessage);
+}
+function sendCommand(command){if(!client||!client.connected){log("Cannot send command: MQTT not connected");return}client.publish(`${BASE_TOPIC}/command`,command,{qos:1,retain:false});log("Command sent: "+command)}
+function handleMessage(topic,payload){
+const msg=payload.toString(),sub=topic.replace(BASE_TOPIC+"/","");$("lastUpdate").textContent=nowTime();
+switch(sub){
+case"online":lastOnlineMessage=Date.now();setEspOnline(msg.toLowerCase()==="online");log("ESP "+msg);break;
+case"relay_state":$("relayState").textContent=msg;if(msg==="CONNECTED")$("modeText").textContent="Cooling Enabled";else if(msg==="DISCONNECTED")$("modeText").textContent="Cooling Disabled";else $("modeText").textContent=msg;log("Relay: "+msg);break;
+case"status":if(msg)$("modeText").textContent=msg.replaceAll("_"," ");break;
+case"temperature_f":{const t=Number(msg);if(isFinite(t)){$("tempF").textContent=t.toFixed(1);tempHistory.push({time:new Date(),temp:t});if(tempHistory.length>maxHistory)tempHistory.shift();drawChart()}}break;
+case"humidity":{const h=Number(msg);if(isFinite(h))$("humidity").textContent=h.toFixed(1)}break;
+case"wifi_rssi":$("wifiRssi").textContent=msg+" dBm";break;
+case"uptime_seconds":$("uptime").textContent=formatUptime(msg);break;
+case"ip":$("ipAddr").textContent=msg;break;
+case"sensor_status":if(msg!=="OK")log("Sensor: "+msg);break;
+}}
+function drawChart(){
+const c=$("chart"),ctx=c.getContext("2d"),w=c.width,h=c.height;ctx.clearRect(0,0,w,h);ctx.strokeStyle="rgba(255,255,255,.14)";ctx.lineWidth=1;for(let i=1;i<4;i++){const y=h*i/4;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}
+if(tempHistory.length<2){ctx.fillStyle="#94a3b8";ctx.font="16px Arial";ctx.textAlign="center";ctx.fillText("Waiting for temperature readings...",w/2,h/2);return}
+const temps=tempHistory.map(p=>p.temp);let minT=Math.min(...temps),maxT=Math.max(...temps);if(maxT-minT<4){minT-=2;maxT+=2}
+const pad=26;ctx.strokeStyle="#38bdf8";ctx.lineWidth=4;ctx.beginPath();tempHistory.forEach((p,i)=>{const x=pad+(i/(tempHistory.length-1))*(w-pad*2),y=h-pad-((p.temp-minT)/(maxT-minT))*(h-pad*2);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});ctx.stroke();ctx.fillStyle="#94a3b8";ctx.font="13px Arial";ctx.textAlign="left";ctx.fillText(maxT.toFixed(0)+"°",6,18);ctx.fillText(minT.toFixed(0)+"°",6,h-8)}
+setInterval(()=>{if(lastOnlineMessage&&Date.now()-lastOnlineMessage>90000)setEspOnline(false)},5000);
+
+if(sessionStorage.getItem("mmcc_unlocked")==="yes"){showDashboard()}
+</script>
+</body>
+</html>
